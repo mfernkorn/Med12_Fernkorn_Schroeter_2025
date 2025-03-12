@@ -3,7 +3,7 @@ This repository contains all code used for the analysis in:
 
 __Med12 cooperates with multiple differentiation signals to facilitate efficient lineage transitions in embryonic stem cells__
 
-_Max Fernkorn and Christian Schröter_
+_Max Fernkorn_ and _Christian Schröter_
 
 [See preprint on BioRxiv](https://doi.org/10.1101/2024.01.22.576603)
 
