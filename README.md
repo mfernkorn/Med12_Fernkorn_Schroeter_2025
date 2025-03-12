@@ -1,4 +1,4 @@
-# Med12_Fernkorn_Schroeter_2025
+# Med12 in lineage transitions - Fernkorn & Schröter, 2025
 This repository contains all code used for the analysis in:
 
 __Med12 cooperates with multiple differentiation signals to facilitate efficient lineage transitions in embryonic stem cells__
