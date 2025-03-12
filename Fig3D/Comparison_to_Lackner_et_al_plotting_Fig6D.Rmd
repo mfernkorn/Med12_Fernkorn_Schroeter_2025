@@ -1,0 +1,249 @@
+---
+title: "Find Pathway affected by Med12 KO"
+
+output: github_document
+---
+
+### Use pathway footprint genes from Lackner et al (Fig6) to determine which pathway is affected by Med12 KO.
+
+```{r}
+library(ggplot2)
+library(edgeR) # requires Limma
+library(ggrepel)
+library(pheatmap)
+library(reshape2)
+library(ggh4x)
+```
+
+Load Data from Lackner et al 2021.
+
+```{r}
+batch_info <- read.csv("./Data/GSE145653_batch_info.csv") # Contains Sample number and information
+Lackner_raw <- read.csv("./Data/GSE145653_counts_KOs.csv") # Contains Raw counts of all KO samples and wt (RC)
+colnames(Lackner_raw) <- c("Gene", batch_info$name)
+```
+
+Load own raw data
+
+```{r}
+Med12comp <- read.csv(file = "./Data/Annotated Probe Report for All Probes_Raw_Counts.txt",sep="\t")
+Med12comp <- Med12comp[!duplicated(Med12comp$Probe),] # Remove duplicate Genes
+Med12comp_raw <- Med12comp[,c(1,13:24)]
+```
+
+Make meta data table with infos about own and lackner data
+
+```{r}
+meta_data_total <- rbind(data.frame("name" = colnames(Med12comp_raw)[2:13],
+                                    "time" = c("2i", "2i","2i","N1", "N1", "N1", "2i", "2i","2i","N1", "N1", "N1"),
+                                    "ko_gene" = c("wt", "wt","wt","wt", "wt","wt","Med12","Med12","Med12","Med12","Med12","Med12"),
+                                    "RNABatch" = "9"), 
+                         batch_info[,2:5])
+meta_data_total$ko_gene[which(substr(meta_data_total$ko_gene, 1,2) == "RC")] <- "wt"
+```
+
+Combine both datasets
+
+```{r}
+combined_raw <- merge(Med12comp_raw, Lackner_raw, by.x='Probe', by.y='Gene')
+rownames(combined_raw) <- combined_raw$Probe
+combined_raw$Probe <- NULL
+```
+
+Generate DGE object, calculate normalization factor and do filtering, to have it coherent for both datasets (Lackner comes filtered, own data are all genes which match to lackner so far)
+
+```{r}
+combined_DGE <- DGEList(combined_raw)
+combined_DGE <- calcNormFactors(combined_DGE)
+
+drop <- which(apply(cpm(combined_DGE), 1, max) < 1) # Filtering based on CPM, not sure how this was done in Lackner et al
+combined_DGE <- combined_DGE[-drop,] 
+# dim(d) # number of genes left only 100 less than after merging
+
+# Define Groups of samples:
+batch <- factor(meta_data_total$RNABatch)
+genotype <- factor(meta_data_total$ko_gene)
+time <- factor(meta_data_total$time)
+```
+
+Perform batch correction on raw data in order to obtain batch corrected counts, which will be used for further comparisons. Additionally batch corrected counts have to be averaged over the replicates.
+
+```{r}
+# Specifiy model for batch correction
+mm <- model.matrix(~0 + genotype) # Lackner et al method description implies that they put batch also in this model, but this does not work as good
+combined_fitted <- voom(combined_DGE, mm, plot = T)
+combined_fitted_batchremoved <- removeBatchEffect(combined_fitted, batch = batch, design = mm)
+plotMDS(combined_fitted_batchremoved, col = as.numeric(batch))
+# removeBatchcorrection is only used for downstream visualization
+# for all other application modeling the batch effect instead of removing it should be done
+# combined_fitted_batchremoved has now the normalized counts without batch effects
+# this has to be averaged by replicates now
+dat <- as.data.frame(t(combined_fitted_batchremoved))
+dat$Probe <- rownames(dat)
+dat2 <- merge(dat, meta_data_total, by.x = 'Probe', by.y = 'name')
+
+dat_N1 <- data.frame()
+dat_2i <- data.frame()
+for (i in 1:length(levels(factor(dat2$ko_gene)))){
+  dat_N1 <- rbind(dat_N1, colMeans(subset(dat2, ko_gene == levels(factor(dat2$ko_gene))[i] & time == 'N1')[2:13818]))
+  dat_2i <- rbind(dat_2i, colMeans(subset(dat2, ko_gene == levels(factor(dat2$ko_gene))[i] & time == '2i')[2:13818]))
+} # slow
+colnames(dat_N1) <- colnames(dat2)[2:13818]
+rownames(dat_N1) <- levels(factor(dat2$ko_gene))
+colnames(dat_2i) <- colnames(dat2)[2:13818]
+rownames(dat_2i) <- levels(factor(dat2$ko_gene))
+```
+
+```{r}
+dat_N1 <- t(dat_N1)
+```
+
+Load lists of footprint genes and combine with normalized and batch corrected count data.
+
+```{r}
+footprints <- read.csv("./Data/embj2020105776-sup-0006-datasetev4_Genelists.csv", sep = ";")
+
+mTOR_footprint <- data.frame(dat_N1[which(rownames(dat_N1) %in% footprints$Tsc2KO.top50),])
+FGF_footprint <- data.frame(dat_N1[which(rownames(dat_N1) %in% footprints$Ptpn11KO.Fgfr1KO.top50),])
+Wnt_footprint <- data.frame(dat_N1[which(rownames(dat_N1) %in% footprints$Tcf7l1KO.top50),])
+Notch_footprint <- data.frame(dat_N1[which(rownames(dat_N1) %in% footprints$RbpjKO.top50),])
+Lif_footprint <- data.frame(dat_N1[which(rownames(dat_N1) %in% footprints$LIFcultured.top50),])
+```
+
+Calculate foldchange compared to wt
+
+```{r}
+mTOR_footprint_FC <- mTOR_footprint-mTOR_footprint$wt
+mTOR_footprint_FC$wt <- NULL
+FGF_footprint_FC <- FGF_footprint-FGF_footprint$wt
+FGF_footprint_FC$wt <- NULL
+Wnt_footprint_FC <- Wnt_footprint-Wnt_footprint$wt
+Wnt_footprint_FC$wt <- NULL
+Notch_footprint_FC <- Notch_footprint-Notch_footprint$wt
+Notch_footprint_FC$wt <- NULL
+Lif_footprint <- Lif_footprint-Lif_footprint$wt
+Lif_footprint$wt <- NULL
+```
+
+Calculate correlation between pathway defining KO foldchanges and all other KO foldchanges.
+
+```{r}
+Correlations <- data.frame(mTOR = rep(NA, 74), FGF = rep(NA, 74), Wnt = rep(NA, 74), Notch = rep(NA, 74))
+for (i in 1:length(colnames(mTOR_footprint_FC))){
+  mTOR_temp <-cor(mTOR_footprint_FC$Tsc2, mTOR_footprint_FC[,i], method = "spearman")
+  FGF_temp_FGFR1 <-cor(FGF_footprint_FC$Fgfr1, FGF_footprint_FC[,i], method = "spearman")
+  FGF_temp_PTPN11 <-cor(FGF_footprint_FC$Ptpn11, FGF_footprint_FC[,i], method = "spearman")
+  FGF_temp <- (FGF_temp_FGFR1+FGF_temp_PTPN11)/2
+  Wnt_temp <-cor(Wnt_footprint_FC$Tcf7l1, Wnt_footprint_FC[,i], method = "spearman")
+  Notch_temp <-cor(Notch_footprint_FC$Rbpj, Notch_footprint_FC[,i], method = "spearman")
+  Correlations[i,] <- c(mTOR_temp, FGF_temp, Wnt_temp, Notch_temp)
+}
+rownames(Correlations) <- colnames(mTOR_footprint_FC)
+
+```
+
+Visualize Correlations as a Heatmap
+
+```{r, fig.dim=c(5,10)}
+pheatmap(Correlations, cluster_cols = FALSE)
+```
+Plot this for only a subset of interesting genes
+
+```{r}
+Genes_of_interest <- c("Med12","Fgfr1", "Ptpn11", "Raf1", "Etv5", "Tsc2", "Zfp281", "Tcf7l1","Suz12","Eed", "Rbpj","Smg5", "Smg6")
+# Correlations_subset <- subset(Correlations, rownames(Correlations) %in% Genes_of_interest)
+Correlations_subset <- Correlations[Genes_of_interest,c(1,4,3,2)]
+pheatmap(Correlations_subset, cluster_cols = FALSE, cluster_rows = FALSE)
+
+```
+
+
+Calculate Pathway activity as in Lackner et al. Following formulas in Methods in "Prediction of cluster expression by pathway activity". Short description:
+
+-   Sign of Foldchange between the KO line and the wt are modified based on the Foldchange between the footprint defining KO and wt.
+
+-   this directed foldchange is summed up over all footprint genes and divided by the sum of foldchanges of the footprint defining KO (vs wt)
+
+-   Again Sign is defined by effect of footprint defining KO (+ for Tsc and LIF, - for FGF, Tcf7l1 and Rbpj)
+
+```{r}
+# Calculate directed Foldchange
+mTOR_footprint_FC_directed <- mTOR_footprint_FC*sign(mTOR_footprint_FC$Tsc2)
+FGF_footprint_FC_directed <- FGF_footprint_FC*sign(rowMeans(FGF_footprint_FC[,c(19,52)]))
+Wnt_footprint_FC_directed <- Wnt_footprint_FC*sign(Wnt_footprint_FC$Tcf7l1)
+Notch_footprint_FC_directed <- Notch_footprint_FC*sign(Notch_footprint_FC$Rbpj)
+
+# Sum up directed foldchange and devide by defining gene ko (normalize)
+mTOR_footprint_FC_directed_avg <- colSums(mTOR_footprint_FC_directed)/sum(mTOR_footprint_FC_directed$Tsc2)
+FGF_footprint_FC_directed_avg <- colSums(FGF_footprint_FC_directed)/sum(rowMeans(FGF_footprint_FC_directed[,c(19,52)]))
+Wnt_footprint_FC_directed_avg <- colSums(Wnt_footprint_FC_directed)/sum(Wnt_footprint_FC_directed$Tcf7l1)
+Notch_footprint_FC_directed_avg <- colSums(Notch_footprint_FC_directed)/sum(Notch_footprint_FC_directed$Rbpj)
+
+# Adjust sign for FGF, Wnt, Notch
+mTOR_footprint_FC_directed_avg <- mTOR_footprint_FC_directed_avg
+FGF_footprint_FC_directed_avg <- -FGF_footprint_FC_directed_avg
+Wnt_footprint_FC_directed_avg <- -Wnt_footprint_FC_directed_avg
+Notch_footprint_FC_directed_avg <- -Notch_footprint_FC_directed_avg
+```
+
+```{r, fig.dim=c(5,10)}
+# Combine vectors to dataframe
+PW_activity <- data.frame(mTOR = mTOR_footprint_FC_directed_avg, FGF = FGF_footprint_FC_directed_avg, Wnt = Wnt_footprint_FC_directed_avg, Notch = Notch_footprint_FC_directed_avg)
+
+# Visualize in Heatmap
+my.breaks <- seq(-1,1,0.02)
+my.colors <- c(colorRampPalette(colors = c("#92180C","white", "#367829"))(102))
+my.colors[40:60] <- "grey"
+pheatmap(PW_activity, cluster_cols = FALSE,
+         color = my.colors, breaks = my.breaks)
+```
+
+Plot this for only a subset of interesting genes
+
+```{r}
+# Correlations_subset <- subset(Correlations, rownames(Correlations) %in% Genes_of_interest)
+PW_activity_subset <- PW_activity[Genes_of_interest,c(1,4,3,2)]
+
+# Visualize in Heatmap
+my.breaks <- seq(-1,1,0.02)
+my.colors <- c(colorRampPalette(colors = c("#92180C","white", "#367829"))(102))
+my.colors[40:60] <- "grey"
+pheatmap(PW_activity_subset, cluster_cols = FALSE,cluster_rows = FALSE,
+         color = my.colors, breaks = my.breaks)
+
+```
+Try to combine activity and correlation for subset
+
+```{r}
+PW_activity_subset_long <- melt(as.matrix(PW_activity_subset))
+Correlations_subset_long <- melt(as.matrix(Correlations_subset))
+
+total_data_subset_long <- cbind(PW_activity_subset_long,Correlations_subset_long)[,c(1,2,3,6)]
+colnames(total_data_subset_long) <- c("Gene", "Pathway", "Activity", "Correlation")
+
+total_data_subset_long$Gene <- factor(total_data_subset_long$Gene,
+                                           ordered = TRUE,
+                                           levels = rev(Genes_of_interest))
+
+ggplot(total_data_subset_long, aes(y=Gene, x=Pathway)) +
+  geom_tile(aes(fill = Activity, width = Correlation, height = Correlation/1.3)) +
+  scale_fill_gradient2(low = "#92180C", high = "#367829", mid = "grey", midpoint=0)+
+  # scale_fill_gradientn(colours = my.colors, limits = c(-1, 1)) +
+  scale_x_discrete(position = "top") +
+  theme_minimal() + 
+  theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(),
+        text = element_text(color = 'black'), 
+        axis.text = element_text(colour = "black"), 
+        axis.ticks = element_blank(),
+        panel.background = element_blank(),
+        plot.background = element_blank(),
+        # legend.position = "none",
+        legend.background = element_rect(fill = NA, linewidth = 0),
+        legend.key = element_rect(fill = NA),
+        strip.background = element_blank()) +
+  force_panelsizes(rows = unit(4, "cm"),
+                   cols = unit(6, "cm"))
+ggsave("./20231103_Lackner_like_6A_selected_genes.pdf", width = 5, height = 5)
+```
+
