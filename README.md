@@ -1,8 +1,8 @@
 # Med12_Fernkorn_Schroeter_2025
 This repository contains all code used for the analysis in:
 
-Med12 cooperates with multiple differentiation signals to facilitate efficient lineage transitions in embryonic stem cells
-Max Fernkorn and Christian Schröter
+__Med12 cooperates with multiple differentiation signals to facilitate efficient lineage transitions in embryonic stem cells__
+_Max Fernkorn and Christian Schröter_
 [Insert Link/Publication details here]
 
 Code is substructured by corresponding figure panels. Image analysis pipelines are described in ImageJ macros, further analysis and data plotting is included in various R scripts.
